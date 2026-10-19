@@ -34,8 +34,8 @@ s.waitForBoot {
 		var window, tonicMenu, harmonyMenu, meterMenu, tempoSlider, tempoLabel;
 		var playButton, clearButton, degreeBoxes, progressionInfo, nowInfo;
 		var melodyView, melodyInfo, scaleInfo;
-		var updateMelody, playHarmony, setTonic, updateProgressionInfo;
-		var showNote, isPressed, keyNoteOn, keyNoteOff, updateKeyInfo;
+		var updateMelody, playHarmony, voiceLead, setTonic, updateProgressionInfo;
+		var showNote, isPressed, isLeftHand, keyLayout, keyNoteOn, keyNoteOff, updateKeyInfo;
 
 		~tonicStep = 0;
 		~harmonySteps = [2, 4, 5, 8];
@@ -44,6 +44,7 @@ s.waitForBoot {
 		~bpm = 84;
 		~accompOn = false;
 		~melodySynth = nil;
+		~voicing = nil;
 
 		// Each bar is split into groups; the first pulse of a group plays a bass note,
 		// the remaining pulses play the chord. BPM always refers to the quarter note.
@@ -64,11 +65,11 @@ s.waitForBoot {
 			65.406391 * (2 ** ((~tonicStep + (octave * 13) + degree) / 13));
 		};
 
-		window = Window("13-EDO | Left Hand + Melody", Rect(120, 120, 800, 640)).front;
+		window = Window("MicroKeys - Ali Balighi - 2026", Rect(120, 120, 800, 640)).front;
 		window.view.decorator = FlowLayout(window.view.bounds, 14@12, 8@8);
 
 		StaticText(window, 770@30)
-			.string_("13-EDO PIANO | Left-hand chord loop and a mouse / computer-keyboard melody")
+			.string_("MicroKeys - Ali Balighi © 2026")
 			.font_(Font("Helvetica", 17));
 
 		StaticText(window, 90@24).string_("Tonic (C4 base)");
@@ -134,35 +135,65 @@ s.waitForBoot {
 			step == ~mouseStep or: { ~keyNotes.values.any { |note| note[\step] == step } }
 		};
 
+		// Keys that sound in the current left-hand chord (any octave) are shown in green.
+		isLeftHand = { |step|
+			~voicing.notNil and: { ~voicing.any { |voice| (voice - step) % 13 == 0 } }
+		};
+
+		// Piano layout for the 27 visible steps: white keys fill the full height side by side,
+		// black keys sit on the boundary between their neighbours at 3/4 of a white key's
+		// width and length. Whites come first, so the last matching rect is the top one.
+		keyLayout = { |width, height|
+			var whiteWidth = width / 15;
+			var whites = List[], blacks = List[];
+			27.do { |step|
+				var octave = step div: 13;
+				var degree = (step % 13) + 1;
+				if(~whiteDegrees.includes(degree), {
+					var left = ((octave * 7) + ((degree - 1) / 2)) * whiteWidth;
+					whites.add((step: step, white: true, rect: Rect(left, 0, whiteWidth, height)));
+				}, {
+					var center = ((octave * 7) + (degree / 2)) * whiteWidth;
+					var blackWidth = whiteWidth * 0.75;
+					blacks.add((step: step, white: false,
+						rect: Rect(center - (blackWidth / 2), 0, blackWidth, height * 0.75)));
+				});
+			};
+			whites ++ blacks;
+		};
+
 		melodyView.drawFunc_({ |view|
 			var width = view.bounds.width;
 			var height = view.bounds.height;
-			var keyWidth = width / 27;
-			27.do { |step|
-				var degree = (step % 13) + 1;
-				var isWhite = ~whiteDegrees.includes(degree);
-				var rect = Rect(step * keyWidth, 0, keyWidth, height);
+			var whiteWidth = width / 15;
+			keyLayout.value(width, height).do { |key|
+				var step = key[\step];
+				var rect = key[\rect];
+				var pressed = isPressed.value(step + (~keyOctave * 13));
+				var green = isLeftHand.value(step);
 				Pen.fillColor = case
-					{ isPressed.value(step + (~keyOctave * 13)) } { Color.new(0.82, 0.72, 0.43) }
-					{ isWhite } { Color.new(0.95, 0.94, 0.9) }
+					{ pressed } { Color.new(0.82, 0.72, 0.43) }
+					{ green and: { key[\white] } } { Color.new(0.55, 0.85, 0.55) }
+					{ green } { Color.new(0.12, 0.55, 0.25) }
+					{ key[\white] } { Color.new(0.95, 0.94, 0.9) }
 					{ Color.new(0.1, 0.1, 0.12) };
 				Pen.fillRect(rect);
 				Pen.strokeColor = Color.new(0.35, 0.35, 0.38);
 				Pen.width = 1;
 				Pen.strokeRect(rect);
 				Pen.stringCenteredIn(
-					degree.asString,
-					Rect(rect.left, height - 28, keyWidth, 20),
+					((step % 13) + 1).asString,
+					Rect(rect.left, rect.bottom - 28, rect.width, 20),
 					Font("Helvetica", 11),
-					if(isWhite or: { isPressed.value(step + (~keyOctave * 13)) }, { Color.black }, { Color.new(0.85, 0.85, 0.85) })
+					if(key[\white] or: { pressed }, { Color.black }, { Color.new(0.85, 0.85, 0.85) })
 				);
 			};
-			// Gold lines mark each octave of the tonic.
-			[0, 13, 26].do { |step|
+			// Gold lines mark each octave of the tonic (left edge of each degree 1 key).
+			[0, 7, 14].do { |whiteIndex|
 				Pen.strokeColor = Color.new(0.82, 0.72, 0.43);
 				Pen.width = 3;
-				Pen.moveTo((step * keyWidth)@0);
-				Pen.lineTo((step * keyWidth)@height);
+				Pen.moveTo((whiteIndex * whiteWidth)@0);
+				Pen.lineTo((whiteIndex * whiteWidth)@height);
 				Pen.stroke;
 			};
 		});
@@ -179,7 +210,8 @@ s.waitForBoot {
 		setTonic = { |step|
 			~tonicStep = step;
 			if(~melodySynth.notNil) {
-				updateMelody.value(melodyView.bounds.width * 0.5);
+				~melodySynth.set(\freq, ~frequency.value(2, ~mouseStep));
+				showNote.value(~mouseStep);
 			};
 		};
 
@@ -191,9 +223,14 @@ s.waitForBoot {
 			);
 		};
 
-		updateMelody = { |x|
+		updateMelody = { |x, y|
 			// The lane shows two octaves starting at the current keyboard octave.
-			var step = ((x / melodyView.bounds.width.max(1)) * 27).floor.clip(0, 26) + (~keyOctave * 13);
+			var bounds = melodyView.bounds;
+			var point = x.clip(0, bounds.width - 1) @ y.clip(0, bounds.height - 1);
+			var key = keyLayout.value(bounds.width, bounds.height).reverse.detect { |candidate|
+				candidate[\rect].containsPoint(point)
+			};
+			var step = key[\step] + (~keyOctave * 13);
 			if(~melodySynth.notNil) {
 				~melodySynth.set(\freq, ~frequency.value(2, step));
 			};
@@ -245,11 +282,42 @@ s.waitForBoot {
 			};
 		};
 
-		playHarmony = { |root, decay, amp|
+		// Voice leading: each voice of the previous chord moves to the nearest tone of
+		// the new chord, so common tones are held and the rest move by the smallest step.
+		// The first chord is played in close root position.
+		voiceLead = { |root|
 			var interval = ~harmonySteps[~selectedHarmony];
-			3.do { |voice|
+			var pitchClasses = 3.collect { |voice| (root + (interval * voice)) % 13 };
+			var previous = ~voicing;
+			if(previous.isNil, {
+				3.collect { |voice| root + (interval * voice) };
+			}, {
+				var best, bestCost = inf;
+				[[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]].do { |perm|
+					// Each voice may land on its tone just below or just above where it was.
+					8.do { |mask|
+						var candidate = 3.collect { |voice|
+							var below = previous[voice] - ((previous[voice] - pitchClasses[perm[voice]]) % 13);
+							below + (13 * mask.rightShift(voice).bitAnd(1));
+						};
+						// Smallest total motion wins; leaving the two-octave range is penalised
+						// so the voicing does not drift away over a long loop.
+						var cost = (candidate - previous).abs.sum
+							+ (candidate.collect { |step| (step - 25).max(0) + step.neg.max(0) }.sum * 4);
+						if(cost < bestCost) {
+							bestCost = cost;
+							best = candidate;
+						};
+					};
+				};
+				best.sort;
+			});
+		};
+
+		playHarmony = { |decay, amp|
+			~voicing.do { |step|
 				Synth(\edoTone, [
-					\freq, ~frequency.value(1, root + (interval * voice)),
+					\freq, ~frequency.value(1, step),
 					\amp, amp,
 					\decay, decay
 				]);
@@ -311,11 +379,11 @@ s.waitForBoot {
 
 		melodyView.mouseDownAction_({ |view, x, y|
 			view.focus(true);
-			updateMelody.value(x);
+			updateMelody.value(x, y);
 			~melodySynth = Synth(\edoLead, [\freq, ~frequency.value(2, ~mouseStep)]);
 		});
 		melodyView.mouseMoveAction_({ |view, x, y|
-			if(~melodySynth.notNil) { updateMelody.value(x); };
+			if(~melodySynth.notNil) { updateMelody.value(x, y); };
 		});
 		melodyView.mouseUpAction_({ |view, x, y|
 			if(~melodySynth.notNil) {
@@ -343,10 +411,13 @@ s.waitForBoot {
 					if(pulse == 0) {
 						var slot = if(~progression.isEmpty, { 1 }, { bar % ~progression.size + 1 });
 						var count = ~progression.size.max(1);
+						~voicing = voiceLead.value(root);
 						{
-							nowInfo.string = "Now: degree %  |  chord % of %  |  %".format(
-								degree, slot, count, meter[\label]
+							nowInfo.string = "Now: degree %  |  notes [%]  |  chord % of %  |  %".format(
+								degree, ~voicing.collect { |step| (step % 13) + 1 }.join(", "),
+								slot, count, meter[\label]
 							);
+							melodyView.refresh;
 						}.defer;
 					};
 					if(group.notNil, {
@@ -358,12 +429,16 @@ s.waitForBoot {
 							\decay, pulseDur * 0.8
 						]);
 					}, {
-						playHarmony.value(root, pulseDur * 0.9, 0.075);
+						playHarmony.value(pulseDur * 0.9, 0.075);
 					});
 					pulse = pulse + 1;
 				}, {
 					if(pulse != 0 or: { bar != 0 }) {
-						{ nowInfo.string = "Now: stopped" }.defer;
+						~voicing = nil;
+						{
+							nowInfo.string = "Now: stopped";
+							melodyView.refresh;
+						}.defer;
 					};
 					pulse = 0;
 					bar = 0;
