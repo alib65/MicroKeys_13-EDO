@@ -4,7 +4,7 @@ A small SuperCollider instrument for exploring the sound of a 13-tone equal divi
 
 ## Run it
 
-1. Open `MicroKeyExperiment_13-EDO.scd` in SuperCollider.
+1. Open `MicroKeys_13-EDO_Ali Balighi.scd` in SuperCollider.
 2. Evaluate the whole file. The script boots the audio server and opens the instrument window, titled **MicroKeys - Ali Balighi - 2026**, when the server is ready.
 3. Choose a tonic, harmony and meter, tick the chord degrees you want in the loop, set the tempo, and press **Start left hand**.
 4. Click and drag across the on-screen keyboard to play the melody. Release the mouse to stop the note.
